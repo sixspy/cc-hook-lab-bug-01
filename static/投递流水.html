@@ -8,6 +8,7 @@
   <script src="/common.js"></script>
 </head>
 <body>
+<div id="filt-chip" class="chip" data-title="订阅过滤">过滤器凭证读取中</div>
 <header class="顶栏">
     <div class="牌">投递台</div>
     <nav>
@@ -24,16 +25,17 @@
   </header>
   <main class="主区">
     <header class="页头">
-      <h1>投递流水</h1>
-      <p>Webhook 投递控制台 · 应用开发全栈 · 非工单客服</p>
+      <h1>投递流水卡片</h1>
+      <p>只有持合法过滤凭证入队的事件能进入签名投递；每次尝试的签名、响应码和最终命运均可追溯。</p>
     </header>
 
 <section class="卷">
   <label>事件号</label><input id="事件号" placeholder="EVT-..."/>
-  <label><input type="checkbox" id="强制失败"/> 强制失败（测死信）</label>
+  <label><input type="checkbox" id="强制失败" style="width:auto;max-width:none;"/> 强制失败（测死信）</label>
   <p class="消息" id="消息"></p>
   <button class="按钮" type="button" id="投递钮">签名投递一次</button>
   <button class="按钮 次" type="button" id="批量钮">批量重试待投</button>
+  <div id="命运卡" class="命运卡"><p class="说明">投递后这里显示该事件的修复后命运：待投 → 投递中 → 已投递/死信。</p></div>
 </section>
 <section class="卷"><div class="表绕"><table><thead><tr><th>尝试号</th><th>事件号</th><th>端点键</th><th>签名摘要</th><th>状态</th><th>响应码</th></tr></thead><tbody id="表"></tbody></table></div></section>
 
@@ -44,18 +46,35 @@ async function 刷表() {
   const rows = await 投递台.getJSON('/api/投递');
   const tb = document.getElementById('表'); tb.innerHTML='';
   for (const r of rows) {
-    const tr = 投递台.行('<td>'+投递台.安全文本(r.尝试号)+'</td><td>'+投递台.安全文本(r.事件号)+'</td><td>'+投递台.安全文本(r.端点键)+'</td><td>'+投递台.安全文本(r.签名摘要)+'</td><td></td><td>'+投递台.安全文本(r.响应码)+'</td>');
+    const tr = 投递台.行('<td>'+投递台.安全文本(r.尝试号)+'</td><td><a href="/事件详情.html?事件号='+encodeURIComponent(r.事件号)+'">'+投递台.安全文本(r.事件号)+'</a></td><td>'+投递台.安全文本(r.端点键)+'</td><td class="指纹">'+投递台.安全文本(r.签名摘要)+'</td><td></td><td>'+投递台.安全文本(r.响应码)+'</td>');
     tr.children[4].appendChild(投递台.徽章(r.状态)); tb.appendChild(tr);
+  }
+}
+async function 显示命运(eid, rep) {
+  const card = document.getElementById('命运卡');
+  try {
+    const d = await 投递台.getJSON('/api/事件/' + encodeURIComponent(eid));
+    card.className = '命运卡 ' + (d.状态 === '已投递' ? 'ok' : (d.状态 === '死信' ? 'bad' : ''));
+    card.innerHTML = '<h3></h3><p class="说明"></p><p class="指纹"></p><pre class="说明"></pre>';
+    card.children[0].textContent = `${d.事件号} → ${d.状态}`;
+    card.children[1].textContent = `过滤账实：${d.账实标记 || ''}；尝试 ${(d.尝试||[]).length} 次；死信匣：${d.死信 ? d.死信.状态 : '无'}。`;
+    card.children[2].textContent = d.过滤指纹 ? `过滤指纹 ${d.过滤指纹}` : '';
+    card.children[3].textContent = JSON.stringify(rep || d, null, 2);
+  } catch (e) {
+    card.className = '命运卡 bad';
+    card.textContent = '命运读取失败：' + e.message;
   }
 }
 document.getElementById('投递钮').onclick = async () => {
   const 消息 = document.getElementById('消息');
+  const eid = document.getElementById('事件号').value;
   try {
     const rep = await 投递台.postJSON('/api/投递', {
-      事件号: document.getElementById('事件号').value,
+      事件号: eid,
       强制失败: document.getElementById('强制失败').checked,
     });
     消息.textContent = JSON.stringify(rep);
+    await 显示命运(eid, rep);
     await 刷表();
   } catch (e) { 消息.textContent = e.message; }
 };

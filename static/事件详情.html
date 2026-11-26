@@ -8,6 +8,7 @@
   <script src="/common.js"></script>
 </head>
 <body>
+<div id="filt-chip" class="chip" data-title="订阅过滤">过滤器凭证读取中</div>
 <header class="顶栏">
     <div class="牌">投递台</div>
     <nav>
@@ -22,27 +23,68 @@
     </nav>
     <button class="按钮 次" type="button" onclick="fetch('/api/登出',{method:'POST'}).then(()=>location.href='/login')">退出</button>
   </header>
+
   <main class="主区">
     <header class="页头">
-      <h1>事件详情</h1>
-      <p>Webhook 投递控制台 · 应用开发全栈 · 非工单客服</p>
+      <h1>事件队列详情 / 修复后命运</h1>
+      <p>这里同时展示事件状态、过滤独立凭证、投递尝试与死信命运。</p>
     </header>
 
 <section class="卷">
   <label>事件号</label><input id="事件号"/>
-  <button class="按钮" type="button" id="查">查询</button>
+  <button class="按钮" type="button" id="查">查询命运</button>
+  <div id="命运卡" class="命运卡"><p class="说明">输入事件号后查询。被过滤器拒绝的请求不进事件表，但可在下方凭证接口按事件号查到拒收凭证。</p></div>
   <pre id="出" class="说明"></pre>
 </section>
 
   </main>
 
 <script>
-document.getElementById('查').onclick = async () => {
+async function 查询凭证(eid) {
   try {
-    const id = document.getElementById('事件号').value;
-    document.getElementById('出').textContent = JSON.stringify(await 投递台.getJSON('/api/事件/'+encodeURIComponent(id)), null, 2);
-  } catch (e) { document.getElementById('出').textContent = e.message; }
-};
+    return await 投递台.getJSON('/api/过滤凭证?事件号=' + encodeURIComponent(eid));
+  } catch (e) { return []; }
+}
+async function 查询() {
+  const id = document.getElementById('事件号').value.trim();
+  const card = document.getElementById('命运卡');
+  const out = document.getElementById('出');
+  if (!id) return;
+  try {
+    const d = await 投递台.getJSON('/api/事件/'+encodeURIComponent(id));
+    const creds = d.过滤凭证 || await 查询凭证(id);
+    const latest = creds[0] || d.过滤凭证摘要 || null;
+    card.className = '命运卡 ' + (d.合法入账 === false ? 'bad' : 'ok');
+    card.innerHTML = '';
+    const h = document.createElement('h3');
+    h.textContent = `${d.事件号} · ${d.状态} · ${d.账实标记 || ''}`;
+    card.appendChild(h);
+    const p = document.createElement('p');
+    p.className = '说明';
+    p.textContent = `端点 ${d.端点键}；类型 ${d.事件类型}；尝试 ${(d.尝试||[]).length} 次；死信 ${d.死信 ? d.死信.状态 : '无'}。`;
+    card.appendChild(p);
+    if (latest) {
+      const fp = document.createElement('p'); fp.className = '指纹';
+      fp.textContent = `过滤凭证：${latest.决定 || ''} · ${latest.口径 || ''} · ${latest.指纹 || d.过滤指纹 || ''} · ${latest.原因 || ''}`;
+      card.appendChild(fp);
+    }
+    out.textContent = JSON.stringify({...d, 过滤凭证全量: creds}, null, 2);
+  } catch (e) {
+    const creds = await 查询凭证(id);
+    if (creds.length) {
+      card.className = '命运卡 bad';
+      card.innerHTML = '<h3>事件未入现行队列：过滤拒收/旁路凭证</h3>';
+      out.textContent = JSON.stringify(creds, null, 2);
+    } else {
+      card.className = '命运卡 bad';
+      card.innerHTML = '<h3>查询失败</h3>';
+      out.textContent = e.message;
+    }
+  }
+}
+document.getElementById('查').onclick = 查询;
+const preset = new URLSearchParams(location.search).get('事件号');
+if (preset) { document.getElementById('事件号').value = preset; 查询(); }
 </script>
 
 </body>

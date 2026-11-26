@@ -8,7 +8,7 @@
   <script src="/common.js"></script>
 </head>
 <body>
-<div id="filt-chip" class="chip" data-title="订阅过滤">过滤已亮</div>
+<div id="filt-chip" class="chip" data-title="订阅过滤">过滤器凭证读取中</div>
 
 <header class="顶栏">
     <div class="牌">投递台</div>
@@ -26,8 +26,8 @@
   </header>
   <main class="主区">
     <header class="页头">
-      <h1>签名规</h1>
-      <p>Webhook 投递控制台 · 应用开发全栈 · 非工单客服</p>
+      <h1>签名规策略</h1>
+      <p>HMAC 签名策略之外，本页同时钉住订阅过滤 fail-closed 策略与独立凭证指纹。</p>
     </header>
 
 <section class="卷">
@@ -36,13 +36,22 @@
   <p class="消息" id="消息"></p>
   <button class="按钮" type="button" id="保存">保存签名规</button>
 </section>
-<section class="卷"><pre id="规" class="说明"></pre></section>
+<section class="卷"><h2>签名规键值</h2><pre id="规" class="说明"></pre></section>
+<section class="卷"><h2>订阅过滤凭证策略</h2><pre id="过滤策略" class="说明">读取中…</pre></section>
 
   </main>
 
 <script>
 async function 刷() {
   document.getElementById('规').textContent = JSON.stringify(await 投递台.getJSON('/api/签名规'), null, 2);
+  const board = await 投递台.刷新过滤芯片();
+  document.getElementById('过滤策略').textContent = JSON.stringify({
+    工程形态: '独立凭证钉过滤器指纹并拒恒真短路回刷（cutover_book）',
+    解析失败策略: '拒绝入队并写拒收凭证，不允许静默恒真放行',
+    并发策略: '线程锁 + fcntl 文件互斥 + BEGIN IMMEDIATE',
+    禁止并存: '双写 live_flag/archive 第二读轨未启用',
+    看板: board,
+  }, null, 2);
 }
 document.getElementById('保存').onclick = async () => {
   try {

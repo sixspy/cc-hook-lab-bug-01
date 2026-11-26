@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from app.db import 连接
+from app.services import 过滤
 
 建表 = """
 CREATE TABLE IF NOT EXISTS 用户 (
@@ -17,7 +18,11 @@ CREATE TABLE IF NOT EXISTS 投递端点 (
   回调URL TEXT NOT NULL,
   密钥版本 TEXT NOT NULL DEFAULT 'v1',
   启用 INTEGER NOT NULL DEFAULT 1,
-  说明 TEXT NOT NULL DEFAULT ''
+  说明 TEXT NOT NULL DEFAULT '',
+  过滤表达式 TEXT NOT NULL DEFAULT '',
+  过滤指纹 TEXT NOT NULL DEFAULT '',
+  过滤态 TEXT NOT NULL DEFAULT '未设置',
+  过滤版本 INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS 事件 (
   事件号 TEXT PRIMARY KEY,
@@ -27,8 +32,25 @@ CREATE TABLE IF NOT EXISTS 事件 (
   优先级 TEXT NOT NULL DEFAULT '普通',
   状态 TEXT NOT NULL DEFAULT '待投',
   入队时 TEXT NOT NULL,
-  更新时 TEXT NOT NULL
+  更新时 TEXT NOT NULL,
+  过滤指纹 TEXT NOT NULL DEFAULT '',
+  过滤口径 TEXT NOT NULL DEFAULT '',
+  过滤状态 TEXT NOT NULL DEFAULT '未校验'
 );
+CREATE TABLE IF NOT EXISTS 过滤凭证 (
+  凭证号 TEXT PRIMARY KEY,
+  端点键 TEXT NOT NULL,
+  事件号 TEXT NOT NULL DEFAULT '',
+  版本 INTEGER NOT NULL DEFAULT 0,
+  表达式 TEXT NOT NULL DEFAULT '',
+  指纹 TEXT NOT NULL,
+  口径 TEXT NOT NULL,
+  决定 TEXT NOT NULL,
+  原因 TEXT NOT NULL DEFAULT '',
+  时刻 TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_过滤凭证_事件 ON 过滤凭证(事件号);
+CREATE INDEX IF NOT EXISTS idx_过滤凭证_端点 ON 过滤凭证(端点键);
 CREATE TABLE IF NOT EXISTS 投递尝试 (
   尝试号 TEXT PRIMARY KEY,
   事件号 TEXT NOT NULL,
@@ -81,7 +103,14 @@ def 此刻() -> str:
 
 def 初始化库() -> None:
     conn = 连接()
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=30000")
+    except Exception:
+        # 某些受限文件系统不支持 WAL；互斥文件锁仍会串行化关键写路径。
+        pass
     conn.executescript(建表)
+    _迁移旧库(conn)
     _seed_filt_chip(conn)
     if conn.execute("SELECT COUNT(*) AS c FROM 用户").fetchone()["c"] == 0:
         conn.execute("INSERT INTO 用户(账号,密码哈希,角色) VALUES (?,?,?)", ("admin", "123456", "管理员"))
@@ -131,8 +160,60 @@ def 初始化库() -> None:
             "INSERT INTO 操作留痕(时刻,操作,事件号,详情) VALUES (?,?,?,?)",
             (t, "种子", "", "初始化投递台样例"),
         )
+    # 内置样例明确标为合法；运行期脏行不得由每次启动的迁移统一洗白。
+    conn.execute(
+        "UPDATE 事件 SET 过滤口径='seed_legal', 过滤状态='内置种子' "
+        "WHERE 事件号 LIKE 'EVT-demo-%' AND COALESCE(过滤口径,'')=''"
+    )
     conn.commit()
     conn.close()
+
+
+def _迁移旧库(conn) -> None:
+    needed = {
+        "投递端点": {
+            "过滤表达式": "TEXT NOT NULL DEFAULT ''",
+            "过滤指纹": "TEXT NOT NULL DEFAULT ''",
+            "过滤态": "TEXT NOT NULL DEFAULT '未设置'",
+            "过滤版本": "INTEGER NOT NULL DEFAULT 0",
+        },
+        "事件": {
+            "过滤指纹": "TEXT NOT NULL DEFAULT ''",
+            "过滤口径": "TEXT NOT NULL DEFAULT ''",
+            "过滤状态": "TEXT NOT NULL DEFAULT '未校验'",
+        },
+    }
+    for table, columns in needed.items():
+        existing = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        added_event_read_track = table == "事件" and "过滤口径" not in existing
+        for name, decl in columns.items():
+            if name not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+        if added_event_read_track:
+            # 仅“从旧版本迁移的存量行”给历史口径；新版本运行期写入的空口径
+            # 表示缺凭证，不能在每次初始化时被冒充合法。
+            conn.execute(
+                "UPDATE 事件 SET 过滤口径='history_legal', 过滤状态='历史入账' "
+                "WHERE COALESCE(过滤口径,'')=''"
+            )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS 过滤凭证 (
+          凭证号 TEXT PRIMARY KEY,
+          端点键 TEXT NOT NULL,
+          事件号 TEXT NOT NULL DEFAULT '',
+          版本 INTEGER NOT NULL DEFAULT 0,
+          表达式 TEXT NOT NULL DEFAULT '',
+          指纹 TEXT NOT NULL,
+          口径 TEXT NOT NULL,
+          决定 TEXT NOT NULL,
+          原因 TEXT NOT NULL DEFAULT '',
+          时刻 TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_过滤凭证_事件 ON 过滤凭证(事件号)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_过滤凭证_端点 ON 过滤凭证(端点键)")
 
 
 
@@ -146,9 +227,83 @@ def _seed_filt_chip(conn) -> None:
     )
     conn.execute(
         "INSERT INTO 投递元(键,值) VALUES (?,?) ON CONFLICT(键) DO UPDATE SET 值=excluded.值",
-        ("filt_truth", "短路仍入"),
+        ("filt_truth", "过滤已亮"),
     )
     conn.execute(
         "INSERT INTO 投递元(键,值) VALUES (?,?) ON CONFLICT(键) DO UPDATE SET 值=excluded.值",
-        ("filt_active_read", "old_track"),
+        ("filt_active_read", "cutover_book"),
+    )
+    policy_fp = 过滤.指纹表达式(
+        "independent-credential-cutover|hook-bug-01|filt"
+    )
+    fp_row = conn.execute(
+        "SELECT 值 FROM 投递元 WHERE 键='filt_cutover_fp'"
+    ).fetchone()
+    current_fp = str(fp_row["值"] or "") if fp_row else ""
+    if (
+        not current_fp
+        or current_fp in {"stale-fp", "old", "short-true", "fpf_seed_hbg01_cutover_credential"}
+        or not current_fp.startswith("fpf_")
+    ):
+        conn.execute(
+            "INSERT INTO 投递元(键,值) VALUES ('filt_cutover_fp',?) "
+            "ON CONFLICT(键) DO UPDATE SET 值=excluded.值",
+            (policy_fp,),
+        )
+    conn.execute(
+        "INSERT INTO 投递元(键,值) VALUES (?,?) ON CONFLICT(键) DO UPDATE SET 值=excluded.值",
+        ("filt_reject_refresh", "1"),
+    )
+    conn.execute(
+        "INSERT INTO 投递元(键,值) VALUES (?,?) ON CONFLICT(键) DO UPDATE SET 值=excluded.值",
+        ("filt_gate_bypass", "0"),
+    )
+    conn.execute(
+        "INSERT INTO 投递元(键,值) VALUES (?,?) ON CONFLICT(键) DO UPDATE SET 值=excluded.值",
+        ("filt_mode", "cutover_book"),
+    )
+    conn.execute(
+        "INSERT INTO 投递元(键,值) VALUES (?,?) ON CONFLICT(键) DO UPDATE SET 值=excluded.值",
+        ("filt_selected_form", "cutover_book"),
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS 过滤凭证 (
+          凭证号 TEXT PRIMARY KEY,
+          端点键 TEXT NOT NULL,
+          事件号 TEXT NOT NULL DEFAULT '',
+          版本 INTEGER NOT NULL DEFAULT 0,
+          表达式 TEXT NOT NULL DEFAULT '',
+          指纹 TEXT NOT NULL,
+          口径 TEXT NOT NULL,
+          决定 TEXT NOT NULL,
+          原因 TEXT NOT NULL DEFAULT '',
+          时刻 TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO 过滤凭证
+        (凭证号,端点键,事件号,版本,表达式,指纹,口径,决定,原因,时刻)
+        VALUES (?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(凭证号) DO UPDATE SET
+          指纹=excluded.指纹,
+          口径=excluded.口径,
+          决定=excluded.决定,
+          原因=excluded.原因,
+          时刻=excluded.时刻
+        """,
+        (
+            "FPC-G-HBG01-POLICY",
+            "_global_filt_cutover",
+            "",
+            1,
+            "form=cutover_book;bone=hook-bug-01-订阅过滤表达式短路",
+            policy_fp,
+            "独立凭证切流/cutover_book",
+            "钉版",
+            "种子策略凭证：唯一保留独立凭证读轨，拒绝恒真短路回刷",
+            此刻(),
+        ),
     )

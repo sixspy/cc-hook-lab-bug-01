@@ -8,7 +8,7 @@
   <script src="/common.js"></script>
 </head>
 <body>
-<div id="filt-chip" class="chip" data-title="订阅过滤">过滤已亮</div>
+<div id="filt-chip" class="chip" data-title="订阅过滤">过滤器凭证读取中</div>
 
 <header class="顶栏">
     <div class="牌">投递台</div>
@@ -26,8 +26,8 @@
   </header>
   <main class="主区">
     <header class="页头">
-      <h1>事件队列</h1>
-      <p>Webhook 投递控制台 · 应用开发全栈 · 非工单客服</p>
+      <h1>事件队列详情</h1>
+      <p>非法过滤器不再 except: pass 后恒真；拒收留独立凭证，短路脏账会在对账中现形。</p>
     </header>
 
 <section class="卷">
@@ -35,39 +35,81 @@
   <label>端点键</label><input id="端点键" placeholder="ep-billing" value="ep-billing"/>
   <label>载荷摘要</label><input id="载荷摘要" placeholder="key=value"/>
   <label>优先级</label><select id="优先级"><option>紧急</option><option selected>普通</option><option>低</option></select>
+  <label>本次过滤器表达式（可选；默认读端点已钉版表达式）</label>
+  <input id="过滤器" placeholder='非法示例：raise ValueError("bad")'/>
   <p class="消息" id="消息"></p>
   <button class="按钮" type="button" id="入队钮">入队（待投）</button>
   <button class="按钮 次" type="button" id="夹具钮">灌夹具样例</button>
+  <label style="display:inline-block;margin-left:12px;"><input type="checkbox" id="合法仅" style="width:auto;max-width:none;"/> 只看合法凭证读集</label>
 </section>
-<section class="卷"><div class="表绕"><table><thead><tr><th>事件号</th><th>事件类型</th><th>端点键</th><th>载荷摘要</th><th>状态</th></tr></thead><tbody id="表"></tbody></table></div></section>
+<section class="卷">
+  <button class="按钮 次" type="button" id="对账钮">事件队列对账</button>
+  <pre id="对账出" class="说明"></pre>
+</section>
+<section class="卷"><div class="表绕"><table><thead><tr><th>事件号</th><th>事件类型</th><th>端点键</th><th>载荷摘要</th><th>状态</th><th>过滤账实/指纹</th></tr></thead><tbody id="表"></tbody></table></div></section>
 
   </main>
 
 <script>
 async function 刷表() {
-  const rows = await 投递台.getJSON('/api/事件');
+  const legalOnly = document.getElementById('合法仅').checked;
+  const url = legalOnly ? '/api/事件?view=legal' : '/api/事件';
+  const rows = await 投递台.getJSON(url);
   const tb = document.getElementById('表'); tb.innerHTML='';
   for (const r of rows) {
-    const tr = 投递台.行('<td>'+投递台.安全文本(r.事件号)+'</td><td>'+投递台.安全文本(r.事件类型)+'</td><td>'+投递台.安全文本(r.端点键)+'</td><td>'+投递台.安全文本(r.载荷摘要)+'</td><td></td>');
-    tr.children[4].appendChild(投递台.徽章(r.状态)); tb.appendChild(tr);
+    const tr = 投递台.行('<td></td><td></td><td></td><td></td><td></td><td></td>');
+    if (r.合法入账 === false) tr.className = '脏账行';
+    const link = document.createElement('a');
+    link.href = '/事件详情.html?事件号=' + encodeURIComponent(r.事件号);
+    link.textContent = r.事件号;
+    tr.children[0].appendChild(link);
+    tr.children[1].textContent = r.事件类型;
+    tr.children[2].textContent = r.端点键;
+    tr.children[3].textContent = r.载荷摘要;
+    tr.children[4].appendChild(投递台.徽章(r.状态));
+    const box = document.createElement('div');
+    box.appendChild(投递台.账实徽章(r));
+    const fp = document.createElement('div'); fp.className = '指纹';
+    fp.textContent = r.过滤指纹 ? String(r.过滤指纹).slice(0, 24) : '无指纹';
+    box.appendChild(fp);
+    tr.children[5].appendChild(box);
+    tb.appendChild(tr);
   }
 }
 document.getElementById('入队钮').onclick = async () => {
   const 消息 = document.getElementById('消息');
+  消息.style.color = '';
   try {
     await 投递台.postJSON('/api/事件/入队', {
       事件类型: document.getElementById('事件类型').value,
       端点键: document.getElementById('端点键').value,
       载荷摘要: document.getElementById('载荷摘要').value,
       优先级: document.getElementById('优先级').value,
+      过滤器: document.getElementById('过滤器').value,
     });
-    消息.textContent = '已入队，状态待投';
+    消息.textContent = '已入队，状态待投，过滤凭证已钉版';
     await 刷表();
-  } catch (e) { 消息.textContent = e.message; }
+  } catch (e) {
+    消息.style.color = 'var(--险)';
+    消息.textContent = '已拒绝/未入待投：' + e.message;
+    await 刷表();
+  }
 };
 document.getElementById('夹具钮').onclick = async () => {
-  await 投递台.postJSON('/api/夹具入队/批量事件样例', {});
-  await 刷表();
+  try {
+    await 投递台.postJSON('/api/夹具入队/批量事件样例', {});
+    await 刷表();
+  } catch (e) { document.getElementById('消息').textContent = e.message; }
+};
+document.getElementById('合法仅').onchange = 刷表;
+document.getElementById('对账钮').onclick = async () => {
+  const out = document.getElementById('对账出');
+  try {
+    const rep = await 投递台.postJSON('/api/互证/跑', {});
+    out.textContent = JSON.stringify(rep, null, 2);
+    await 刷表();
+    await 投递台.刷新过滤芯片();
+  } catch (e) { out.textContent = e.message; }
 };
 刷表();
 </script>

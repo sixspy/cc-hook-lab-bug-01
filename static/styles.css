@@ -63,6 +63,31 @@
   .徽章.待确认 { background: #fef3c7; color: #92400e; }
   .徽章.已投递 { background: #d1fae5; color: var(--好); }
   .徽章.已作废 { background: #fee2e2; color: var(--险); }
+  .徽章.合法 { background: #d1fae5; color: var(--好); }
+  .徽章.脏账 { background: #fee2e2; color: var(--险); font-weight: 700; }
+  .chip {
+    margin: 10px 16px 0;
+    padding: 7px 12px;
+    border-radius: 999px;
+    display: inline-block;
+    font-size: 13px;
+    border: 1px solid var(--边);
+    background: #fffdf8;
+    color: var(--靛);
+  }
+  .chip.ok { background: #d1fae5; color: var(--好); border-color: #9ad8bb; }
+  .chip.bad { background: #fee2e2; color: var(--险); border-color: #f0b4b4; font-weight: 700; }
+  .chip.warn { background: #fde8c8; color: #9a5700; }
+  tr.脏账行 { background: #fff5f5; }
+  .命运卡 { border-left: 4px solid var(--靛); padding-left: 12px; margin: 10px 0; }
+  .命运卡.bad { border-left-color: var(--险); }
+  .命运卡.ok { border-left-color: var(--好); }
+  .行内头 { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .行内头 h2 { margin: 0; }
+  .行内头 .chip { margin: 0; }
+  .工具行 { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 10px 0; }
+  .工具行 a.按钮 { text-decoration: none; display: inline-flex; align-items: center; }
+  .指纹 { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; opacity: .78; }
   .按钮 {
     background: var(--靛);
     color: #fff;

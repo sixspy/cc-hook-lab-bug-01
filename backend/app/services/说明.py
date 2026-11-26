@@ -13,8 +13,10 @@ def 仓情() -> dict:
         "概览": 签名目录.概览(),
         "filt_board": _snap,
         "filt_chip": _snap.get("panel_chip", "过滤已亮"),
-        "filt_truth": _snap.get("truth", "短路仍入"),
-        "filt_aligned": True,
+        "filt_truth": _snap.get("truth", "过滤已亮"),
+        "filt_aligned": bool(_snap.get("aligned")),
+        "filt_active_read": _snap.get("active_read"),
+        "filt_cutover_fp": _snap.get("cutover_fp"),
         "filt_title": "订阅过滤",
     }
 

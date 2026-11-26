@@ -8,7 +8,7 @@
   <script src="/common.js"></script>
 </head>
 <body>
-<div id="filt-chip" class="chip" data-title="订阅过滤">过滤已亮</div>
+<div id="filt-chip" class="chip" data-title="订阅过滤">过滤器凭证读取中</div>
 
 <header class="顶栏">
     <div class="牌">投递台</div>
@@ -26,19 +26,25 @@
   </header>
   <main class="主区">
     <header class="页头">
-      <h1>端点名册</h1>
-      <p>Webhook 投递控制台 · 应用开发全栈 · 非工单客服</p>
+      <h1>端点名册列表</h1>
+      <p>Webhook 投递控制台 · 订阅过滤器必须有解析状态与指纹；非法表达式不得显示为“过滤已生效”。</p>
     </header>
 
 <section class="卷">
+  <h2>登记端点</h2>
   <label>端点键</label><input id="端点键" placeholder="ep-new"/>
   <label>名称</label><input id="名称"/>
   <label>回调URL</label><input id="回调URL" placeholder="https://..."/>
   <label>密钥版本</label><input id="密钥版本" value="v1"/>
+  <label>订阅过滤表达式（可留空；非法表达式会落为“解析失败”，入队 fail-closed）</label>
+  <input id="过滤表达式" placeholder='事件类型 == "invoice.paid"'/>
   <p class="消息" id="消息"></p>
   <button class="按钮" type="button" id="登记">登记端点</button>
 </section>
-<section class="卷"><div class="表绕"><table><thead><tr><th>端点键</th><th>名称</th><th>回调URL</th><th>密钥版本</th><th>启用</th><th>操作</th></tr></thead><tbody id="表"></tbody></table></div></section>
+<section class="卷">
+  <h2>名册与过滤器指纹</h2>
+  <div class="表绕"><table><thead><tr><th>端点键</th><th>名称</th><th>回调URL</th><th>密钥版本</th><th>启用</th><th>过滤器</th><th>指纹/版本</th><th>操作</th></tr></thead><tbody id="表"></tbody></table></div>
+</section>
 
   </main>
 
@@ -47,25 +53,59 @@ async function 刷表() {
   const rows = await 投递台.getJSON('/api/端点');
   const tb = document.getElementById('表'); tb.innerHTML='';
   for (const r of rows) {
-    const tr = 投递台.行('<td>'+投递台.安全文本(r.端点键)+'</td><td>'+投递台.安全文本(r.名称)+'</td><td>'+投递台.安全文本(r.回调URL)+'</td><td>'+投递台.安全文本(r.密钥版本)+'</td><td></td><td></td>');
+    const tr = 投递台.行('<td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td>');
+    tr.children[0].textContent = r.端点键;
+    tr.children[1].textContent = r.名称;
+    tr.children[2].textContent = r.回调URL;
+    tr.children[3].textContent = r.密钥版本;
     tr.children[4].appendChild(投递台.徽章(r.启用 ? '启用' : '停用'));
-    const btn = document.createElement('button'); btn.className='按钮 次'; btn.type='button';
-    btn.textContent = r.启用 ? '停用' : '启用';
-    btn.onclick = async () => { await 投递台.postJSON('/api/端点/启用', {端点键:r.端点键, 启用: !r.启用}); await 刷表(); };
-    tr.children[5].appendChild(btn); tb.appendChild(tr);
+
+    const filterText = r.过滤表达式 || (r.说明 || '');
+    tr.children[5].innerHTML = '<div class="说明"></div>';
+    tr.children[5].firstChild.textContent = filterText || '未设置（策略性全放行）';
+    const state = r.过滤态 || '未设置';
+    tr.children[5].appendChild(投递台.徽章(state === '有效' ? '已校验准入' : state));
+
+    tr.children[6].innerHTML = '<div class="指纹"></div><div></div>';
+    tr.children[6].children[0].textContent = r.过滤指纹 ? String(r.过滤指纹).slice(0, 20) : '无独立指纹';
+    tr.children[6].children[1].textContent = 'v' + (r.过滤版本 || 0) + ' · cutover_book';
+
+    const actions = document.createElement('div');
+    const toggle = document.createElement('button'); toggle.className='按钮 次'; toggle.type='button';
+    toggle.textContent = r.启用 ? '停用' : '启用';
+    toggle.onclick = async () => { await 投递台.postJSON('/api/端点/启用', {端点键:r.端点键, 启用: !r.启用}); await 刷表(); };
+    const editFilter = document.createElement('button'); editFilter.className='按钮'; editFilter.type='button';
+    editFilter.textContent = '改过滤器';
+    editFilter.style.marginLeft = '6px';
+    editFilter.onclick = async () => {
+      const expr = window.prompt('写入订阅过滤表达式；非法表达式会被标记为解析失败并在入队时拒绝', r.过滤表达式 || '');
+      if (expr === null) return;
+      try {
+        await 投递台.postJSON('/api/端点/过滤器', {端点键:r.端点键, 过滤表达式: expr});
+        document.getElementById('消息').textContent = '过滤器指纹已钉版';
+        await 刷表();
+        await 投递台.刷新过滤芯片();
+      } catch (e) { document.getElementById('消息').textContent = e.message; }
+    };
+    actions.append(toggle, editFilter);
+    tr.children[7].appendChild(actions);
+    tb.appendChild(tr);
   }
 }
 document.getElementById('登记').onclick = async () => {
+  const 消息 = document.getElementById('消息');
   try {
     await 投递台.postJSON('/api/端点', {
       端点键: document.getElementById('端点键').value,
       名称: document.getElementById('名称').value,
       回调URL: document.getElementById('回调URL').value,
       密钥版本: document.getElementById('密钥版本').value,
+      过滤表达式: document.getElementById('过滤表达式').value,
     });
-    document.getElementById('消息').textContent = '已登记';
+    消息.textContent = '已登记，过滤器凭证已落台';
     await 刷表();
-  } catch (e) { document.getElementById('消息').textContent = e.message; }
+    await 投递台.刷新过滤芯片();
+  } catch (e) { 消息.textContent = e.message; }
 };
 刷表();
 </script>

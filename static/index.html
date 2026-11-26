@@ -28,14 +28,63 @@
       <p>Webhook 投递控制台 · 应用开发全栈 · 非工单客服</p>
     </header>
 
+<section class="卷 命运卡" aria-label="订阅过滤器修复命运">
+  <div class="行内头">
+    <h2>订阅过滤器 · 修复后命运</h2>
+    <span id="filt-chip" class="chip warn">正在读取独立凭证口径…</span>
+  </div>
+  <div class="指标" id="filt-指标"></div>
+  <p class="说明" id="filt-说明">
+    非法表达式必须拒收或旁路，不再吞掉解析异常后恒真放行；当前只保留独立凭证 + cutover_book 一种读轨。
+  </p>
+  <div class="工具行">
+    <button class="按钮" type="button" id="filt-对账钮">刷新过滤器队列对账</button>
+    <a class="按钮 次" href="/事件队列.html">去事件队列看账实</a>
+    <a class="按钮 次" href="/死信匣.html">去死信匣看终态</a>
+  </div>
+  <pre id="filt-对账出" class="说明" aria-live="polite"></pre>
+</section>
+
 <section class="卷"><div class="指标" id="指标"></div></section>
-<section class="卷"><table><thead><tr><th>事件号</th><th>事件类型</th><th>端点键</th><th>状态</th></tr></thead><tbody id="表"></tbody></table></section>
+<section class="卷"><table><thead><tr><th>事件号</th><th>事件类型</th><th>端点键</th><th>状态</th><th>账实/过滤命运</th></tr></thead><tbody id="表"></tbody></table></section>
 <section class="卷"><p class="说明" id="主链"></p><button class="按钮" type="button" id="互证钮">跑投递互证</button><pre id="互证出" class="说明"></pre></section>
 
   </main>
 
 <script>
 (async () => {
+  const renderFilt = async () => {
+    const d = await 投递台.刷新过滤芯片();
+    const box = document.getElementById('filt-指标');
+    box.innerHTML = '';
+    if (!d) return;
+    const q = d.queue_reconcile || {};
+    const items = {
+      '工程形态': d.selected_form || q.selected_form || 'cutover_book',
+      '现行读轨': d.active_read || q.active_read || 'cutover_book',
+      '过滤器指纹': d.cutover_fp || q.cutover_fp || '无',
+      '合法事件': q.合法事件数 ?? '—',
+      '短路脏账': q.脏事件数 ?? '—',
+      '凭证缺口': q.凭证缺口数 ?? '—',
+      '双写归档': d.archive_count ?? 0,
+      '恒真短路返回': d.short_circuit_return === false ? '否' : '是',
+    };
+    for (const [k, v] of Object.entries(items)) {
+      const card = document.createElement('div');
+      card.className = '卡';
+      card.innerHTML = '<small>' + 投递台.安全文本(k) + '</small><b>' + 投递台.安全文本(v) + '</b>';
+      box.appendChild(card);
+    }
+    const note = document.getElementById('filt-说明');
+    if (d.aligned) {
+      note.textContent = '账实已对齐：合法入队持有真实指纹凭证；解析失败/不匹配被拒收，旧短路脏账不会被洗成合法队列。';
+    } else {
+      const dirty = (q.脏事件号 || []).concat(q.凭证缺口事件号 || []);
+      note.textContent = '仍有账实异常：' + (dirty.length ? dirty.join('、') : '请查看对账 JSON') +
+        '。这些行可在事件队列/互证中看见，但不得计入合法读集。';
+    }
+  };
+
   const o = await 投递台.getJSON('/api/概览');
   const box = document.getElementById('指标');
   for (const [k,v] of Object.entries(o)) {
@@ -44,16 +93,37 @@
     d.innerHTML = '<small>'+投递台.安全文本(k)+'</small><b>'+投递台.安全文本(v)+'</b>';
     box.appendChild(d);
   }
+  await renderFilt();
+  document.getElementById('filt-对账钮').onclick = async () => {
+    const out = document.getElementById('filt-对账出');
+    try {
+      const audit = await 投递台.getJSON('/api/filt/队列对账');
+      out.textContent = JSON.stringify(audit, null, 2);
+      await renderFilt();
+    } catch (e) {
+      out.textContent = '对账读取失败：' + e.message;
+    }
+  };
   const c = await 投递台.getJSON('/api/仓情');
   document.getElementById('主链').textContent = c.主链 || '';
   const rows = await 投递台.getJSON('/api/事件');
   const tb = document.getElementById('表');
   for (const r of rows.slice(0,12)) {
-    const tr = 投递台.行('<td>'+投递台.安全文本(r.事件号)+'</td><td>'+投递台.安全文本(r.事件类型)+'</td><td>'+投递台.安全文本(r.端点键)+'</td><td></td>');
-    tr.children[3].appendChild(投递台.徽章(r.状态)); tb.appendChild(tr);
+    const tr = 投递台.行('<td>'+投递台.安全文本(r.事件号)+'</td><td>'+投递台.安全文本(r.事件类型)+'</td><td>'+投递台.安全文本(r.端点键)+'</td><td></td><td></td>');
+    tr.children[3].appendChild(投递台.徽章(r.状态));
+    const fate = tr.children[4];
+    fate.appendChild(投递台.账实徽章(r));
+    if (r.过滤指纹) {
+      const fp = document.createElement('div');
+      fp.className = '指纹';
+      fp.textContent = String(r.过滤指纹).slice(0, 18);
+      fate.appendChild(fp);
+    }
+    tb.appendChild(tr);
   }
   document.getElementById('互证钮').onclick = async () => {
     document.getElementById('互证出').textContent = JSON.stringify(await 投递台.postJSON('/api/互证/跑',{}), null, 2);
+    await renderFilt();
   };
 })();
 </script>

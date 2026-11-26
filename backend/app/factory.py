@@ -4,6 +4,7 @@ from pathlib import Path
 from flask import Flask, jsonify, redirect, request, send_from_directory
 
 from app import seed
+from app.db import 连接 as db_连接
 from app.services import 会话, 入队, 投递, 死信, 重试, 互证, 端点, 夹具, 说明, 签名目录
 from app.services import filt as filt_svc
 from app.services import filt_cutover as filt_cut_svc
@@ -76,6 +77,9 @@ def create_app() -> Flask:
 
     @app.get("/api/事件")
     def api_事件():
+        view = str(request.args.get("view") or request.args.get("口径") or "").strip()
+        if view in {"legal", "合法", "合法入队", "cutover_book"}:
+            return jsonify(签名目录.合法事件列表())
         return jsonify(签名目录.事件列表())
 
     @app.get("/api/事件/<eid>")
@@ -149,6 +153,44 @@ def create_app() -> Flask:
         except (KeyError, ValueError) as e:
             return jsonify({"错误": str(e)}), 400
 
+    @app.get("/api/端点/过滤器")
+    def api_端点过滤器徽标():
+        key = str(request.args.get("端点键") or "").strip()
+        if not key:
+            return jsonify({"错误": "端点键必填"}), 400
+        return jsonify(端点.过滤器徽标(key))
+
+    @app.post("/api/端点/过滤器")
+    def api_端点过滤器改():
+        body = request.get_json(force=True, silent=True) or {}
+        try:
+            return jsonify(端点.改过滤器(
+                body["端点键"],
+                str(body.get("过滤表达式") if body.get("过滤表达式") is not None else body.get("表达式") or ""),
+                body.get("预期指纹"),
+            ))
+        except (KeyError, ValueError) as e:
+            return jsonify({"错误": str(e)}), 409 if "指纹" in str(e) else 400
+
+    @app.get("/api/过滤凭证")
+    def api_过滤凭证():
+        eid = str(request.args.get("事件号") or "").strip()
+        key = str(request.args.get("端点键") or "").strip()
+        conn = db_连接()
+        try:
+            sql = "SELECT * FROM 过滤凭证 WHERE 1=1"
+            args: list = []
+            if eid:
+                sql += " AND 事件号=?"
+                args.append(eid)
+            if key:
+                sql += " AND 端点键=?"
+                args.append(key)
+            sql += " ORDER BY rowid DESC LIMIT 200"
+            return jsonify([dict(r) for r in conn.execute(sql, args).fetchall()])
+        finally:
+            conn.close()
+
     @app.get("/api/互证")
     def api_互证列表():
         return jsonify(签名目录.互证列表())
@@ -191,7 +233,14 @@ def create_app() -> Flask:
     @app.post("/api/filt/动作")
     def api_filt_action():
         body = request.get_json(force=True, silent=True) or {}
-        return jsonify(filt_svc.commit_action(body))
+        try:
+            return jsonify(filt_svc.commit_action(body))
+        except filt_svc.WritebackRejected as e:
+            return jsonify({"错误": str(e), "writeback_rejected": True}), 409
+
+    @app.get("/api/filt/队列对账")
+    def api_filt_queue_reconcile():
+        return jsonify(filt_svc.reconcile_queue())
 
     @app.post("/api/filt/半修展示")
     def api_filt_half():
@@ -213,7 +262,10 @@ def create_app() -> Flask:
     @app.post("/api/filt/双写")
     def api_filt_dual_post():
         body = request.get_json(force=True, silent=True) or {}
-        return jsonify(filt_dual_svc.apply_dualwrite(str(body.get("note") or "")))
+        try:
+            return jsonify(filt_dual_svc.apply_dualwrite(str(body.get("note") or "")))
+        except filt_dual_svc.DualWriteFormDisabled as e:
+            return jsonify({"错误": str(e), "coexistence_rejected": True}), 409
 
     @app.get("/api/filt/审计")
     def api_filt_audit():
